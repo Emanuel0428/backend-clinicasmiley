@@ -66,17 +66,17 @@ const getServices = async (req, res, next) => {
 const getPaymentMethods = async (req, res, next) => {
   try {
     const { data, error } = await supabase
-      .from('Porcentaje_pagos')
-      .select('id, porcentaje')
-      .order('id', { ascending: true });
+      .from('Metodos_Pagos') // Cambiamos a la tabla correcta
+      .select('descpMetodo') // Seleccionamos el campo correcto
+      .order('descpMetodo', { ascending: true });
 
     if (error) {
-      const err = new Error('Error al obtener los porcentajes de pagos');
+      const err = new Error('Error al obtener los métodos de pago');
       err.statusCode = 500;
       throw err;
     }
 
-    res.status(200).json(data.map((method) => method.metodo_pago));
+    res.status(200).json(data.map((method) => method.descpMetodo)); // Devolvemos descpMetodo
   } catch (err) {
     next(err);
   }

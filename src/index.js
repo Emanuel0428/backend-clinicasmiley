@@ -6,6 +6,7 @@ const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const dataRoutes = require('./routes/dataRoutes');
 const recordRoutes = require('./routes/recordRoutes');
+const sedeRoutes = require('./routes/sedeRoutes');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
@@ -24,7 +25,7 @@ app.use('/api', authRoutes);
 app.use('/api', userRoutes);
 app.use('/api', dataRoutes);
 app.use('/api', recordRoutes);
-
+app.use('/api', sedeRoutes); 
 // Error Handling Middleware
 app.use(errorHandler);
 
