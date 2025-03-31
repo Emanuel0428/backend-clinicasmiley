@@ -262,25 +262,130 @@ const getRecords = async (req, res, next) => {
   try {
     console.log('Iniciando getRecords');
 
-    const { data, error } = await supabase
-      .from('dia_dia')
-      .select('*, Metodos_Pagos(descpMetodo)') // JOIN con Metodos_Pagos para obtener descpMetodo
-      .order('fecha_inicio', { ascending: false });
+    // Obtener el id_sede desde los parámetros de la solicitud
+    const { id_sede } = req.query;
+    console.log('id_sede recibido:', id_sede);
 
-    if (error) {
-      console.error('Error al obtener los registros:', error);
-      const err = new Error('Error al obtener los registros');
+    if (!id_sede) {
+      console.log('Error: id_sede no proporcionado');
+      const err = new Error('El id_sede es requerido');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // Convertir id_sede a número entero
+    const sedeId = parseInt(id_sede, 10);
+    console.log('id_sede convertido a número:', sedeId);
+
+    if (isNaN(sedeId)) {
+      console.log('Error: id_sede no es un número válido');
+      const err = new Error('El id_sede debe ser un número válido');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // Obtener los nombres de los doctores que pertenecen a la sede
+    console.log('Consultando doctores para id_sede:', sedeId);
+    const { data: doctores, error: doctoresError } = await supabase
+      .from('Doctores')
+      .select('nombre_doc')
+      .eq('id_sede', sedeId);
+
+    if (doctoresError) {
+      console.error('Error al obtener los doctores:', doctoresError);
+      const err = new Error('Error al obtener los doctores');
       err.statusCode = 500;
       throw err;
     }
-    console.log(`Registros obtenidos: ${data.length} registros`);
+    console.log('Doctores obtenidos:', doctores);
 
+    // Extraer solo los nombres de los doctores en un arreglo
+    const nombresDoctores = doctores.map(doctor => doctor.nombre_doc);
+    console.log('Nombres de doctores:', nombresDoctores);
+
+    // Obtener los nombres de los auxiliares que pertenecen a la sede
+    console.log('Consultando auxiliares para id_sede:', sedeId);
+    const { data: auxiliares, error: auxiliaresError } = await supabase
+      .from('Auxiliares')
+      .select('nombre_aux')
+      .eq('id_sede', sedeId);
+
+    if (auxiliaresError) {
+      console.error('Error al obtener los auxiliares:', auxiliaresError);
+      const err = new Error('Error al obtener los auxiliares');
+      err.statusCode = 500;
+      throw err;
+    }
+    console.log('Auxiliares obtenidos:', auxiliares);
+
+    // Extraer solo los nombres de los auxiliares en un arreglo
+    const nombresAuxiliares = auxiliares.map(auxiliar => auxiliar.nombre_aux);
+    console.log('Nombres de auxiliares:', nombresAuxiliares);
+
+    // Consulta 1: Registros asociados a doctores
+    let doctorRecords = [];
+    if (nombresDoctores.length > 0) {
+      console.log('Consultando registros de dia_dia para doctores con nombres:', nombresDoctores);
+      const { data, error } = await supabase
+        .from('dia_dia')
+        .select(`
+          *,
+          Metodos_Pagos(descpMetodo)
+        `)
+        .not('nombre_doc', 'is', null) // Solo registros con nombre_doc
+        .in('nombre_doc', nombresDoctores) // Filtrar por nombres de doctores
+        .order('fecha_inicio', { ascending: false });
+
+      if (error) {
+        console.error('Error al obtener los registros de doctores:', error);
+        const err = new Error('Error al obtener los registros de doctores');
+        err.statusCode = 500;
+        throw err;
+      }
+      console.log('Registros de doctores obtenidos:', data);
+      doctorRecords = data;
+    } else {
+      console.log('No hay doctores para esta sede, omitiendo consulta de registros de doctores');
+    }
+
+    // Consulta 2: Registros asociados a auxiliares
+    let auxRecords = [];
+    if (nombresAuxiliares.length > 0) {
+      console.log('Consultando registros de dia_dia para auxiliares con nombres:', nombresAuxiliares);
+      const { data, error } = await supabase
+        .from('dia_dia')
+        .select(`
+          *,
+          Metodos_Pagos(descpMetodo)
+        `)
+        .not('nombre_aux', 'is', null) // Solo registros con nombre_aux
+        .in('nombre_aux', nombresAuxiliares) // Filtrar por nombres de auxiliares
+        .order('fecha_inicio', { ascending: false });
+
+      if (error) {
+        console.error('Error al obtener los registros de auxiliares:', error);
+        const err = new Error('Error al obtener los registros de auxiliares');
+        err.statusCode = 500;
+        throw err;
+      }
+      console.log('Registros de auxiliares obtenidos:', data);
+      auxRecords = data;
+    } else {
+      console.log('No hay auxiliares para esta sede, omitiendo consulta de registros de auxiliares');
+    }
+
+    // Combinar los resultados
+    const data = [...doctorRecords, ...auxRecords];
+    console.log(`Registros totales obtenidos (doctores + auxiliares): ${data.length} registros`, data);
+
+    // Formatear los datos
+    console.log('Formateando los registros...');
     const formattedData = data.map((record) => {
       const formattedRecord = {
         id: record.id,
         nombreDoctor: record.nombre_doc || record.nombre_aux, // Mostrar doctor o auxiliar
         nombrePaciente: record.paciente,
-        docId: record.doc_id,
+        docId: record.doc_id, // Documento de identificación del paciente
         servicio: record.nombre_serv,
         abono: record.abono,
         descuento: record.dcto,
@@ -292,12 +397,14 @@ const getRecords = async (req, res, next) => {
       };
       return formattedRecord;
     });
+
     console.log('Registros formateados:', formattedData);
 
     res.status(200).json(formattedData);
     console.log('Respuesta enviada al cliente:', res.statusCode);
   } catch (err) {
     console.error('Error en getRecords:', err.message);
+    console.error('Stack del error:', err.stack);
     next(err);
   }
 };
@@ -376,9 +483,34 @@ const getLiquidations = async (req, res, next) => {
   try {
     console.log('Iniciando getLiquidations');
 
+    // Obtener el id_sede desde los parámetros de la solicitud
+    const { id_sede } = req.query;
+    console.log('id_sede recibido:', id_sede);
+
+    if (!id_sede) {
+      console.log('Error: id_sede no proporcionado');
+      const err = new Error('El id_sede es requerido');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // Convertir id_sede a número entero
+    const sedeId = parseInt(id_sede, 10);
+    console.log('id_sede convertido a número:', sedeId);
+
+    if (isNaN(sedeId)) {
+      console.log('Error: id_sede no es un número válido');
+      const err = new Error('El id_sede debe ser un número válido');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // Consultar liquidaciones filtradas por id_sede
+    console.log('Consultando liquidaciones para id_sede:', sedeId);
     const { data, error } = await supabase
       .from('Historial_Liquidaciones')
       .select('*')
+      .eq('id_sede', sedeId) // Filtrar por id_sede
       .order('fecha_liquidacion', { ascending: false });
 
     if (error) {
@@ -387,12 +519,21 @@ const getLiquidations = async (req, res, next) => {
       err.statusCode = 500;
       throw err;
     }
-    console.log(`Liquidaciones obtenidas: ${data.length} liquidaciones`);
+    console.log(`Liquidaciones obtenidas: ${data.length} liquidaciones`, data);
+
+    // Configurar cabeceras para evitar caché
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      'Surrogate-Control': 'no-store',
+    });
 
     res.status(200).json(data);
     console.log('Respuesta enviada al cliente:', res.statusCode);
   } catch (err) {
     console.error('Error en getLiquidations:', err.message);
+    console.error('Stack del error:', err.stack);
     next(err);
   }
 };
