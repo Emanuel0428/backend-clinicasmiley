@@ -1,11 +1,23 @@
-// File: src/controllers/dataController.js
 const supabase = require('../config/supabase');
+
+const getIdSedeFromRequest = (req) => {
+  const id_sede = req.query.id_sede;
+  if (!id_sede) {
+    const err = new Error('id_sede is required');
+    err.statusCode = 400;
+    throw err;
+  }
+  return parseInt(id_sede, 10);
+};
 
 const getDoctors = async (req, res, next) => {
   try {
+    const id_sede = getIdSedeFromRequest(req);
+
     const { data, error } = await supabase
       .from('Doctores')
       .select('nombre_doc')
+      .eq('id_sede', id_sede)
       .order('nombre_doc', { ascending: true });
 
     if (error) {
@@ -14,7 +26,9 @@ const getDoctors = async (req, res, next) => {
       throw err;
     }
 
-    res.status(200).json(data.map((doc) => doc.nombre_doc));
+    const formattedData = data.map((doc) => doc.nombre_doc);
+
+    res.status(200).json(formattedData);
   } catch (err) {
     next(err);
   }
@@ -22,9 +36,12 @@ const getDoctors = async (req, res, next) => {
 
 const getAssistants = async (req, res, next) => {
   try {
+    const id_sede = getIdSedeFromRequest(req);
+
     const { data, error } = await supabase
       .from('Auxiliares')
       .select('nombre_aux')
+      .eq('id_sede', id_sede)
       .order('nombre_aux', { ascending: true });
 
     if (error) {
@@ -33,7 +50,9 @@ const getAssistants = async (req, res, next) => {
       throw err;
     }
 
-    res.status(200).json(data.map((aux) => aux.nombre_aux));
+    const formattedData = data.map((aux) => aux.nombre_aux);
+
+    res.status(200).json(formattedData);
   } catch (err) {
     next(err);
   }
@@ -52,12 +71,12 @@ const getServices = async (req, res, next) => {
       throw err;
     }
 
-    res.status(200).json(
-      data.map((serv) => ({
-        nombre: serv.nombre_serv,
-        precio: serv.valor,
-      }))
-    );
+    const formattedData = data.map((serv) => ({
+      nombre: serv.nombre_serv,
+      precio: serv.valor,
+    }));
+
+    res.status(200).json(formattedData);
   } catch (err) {
     next(err);
   }
@@ -66,8 +85,8 @@ const getServices = async (req, res, next) => {
 const getPaymentMethods = async (req, res, next) => {
   try {
     const { data, error } = await supabase
-      .from('Metodos_Pagos') // Cambiamos a la tabla correcta
-      .select('descpMetodo') // Seleccionamos el campo correcto
+      .from('Metodos_Pagos')
+      .select('descpMetodo')
       .order('descpMetodo', { ascending: true });
 
     if (error) {
@@ -76,7 +95,9 @@ const getPaymentMethods = async (req, res, next) => {
       throw err;
     }
 
-    res.status(200).json(data.map((method) => method.descpMetodo)); // Devolvemos descpMetodo
+    const formattedData = data.map((method) => method.descpMetodo);
+
+    res.status(200).json(formattedData);
   } catch (err) {
     next(err);
   }
