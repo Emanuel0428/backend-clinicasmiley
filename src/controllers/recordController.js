@@ -404,6 +404,7 @@ const createRecord = async (req, res, next) => {
     next(err);
   }
 };
+// File: src/controllers/recordController.js
 const getRecords = async (req, res, next) => {
   try {
     console.log('Iniciando getRecords');
@@ -470,7 +471,8 @@ const getRecords = async (req, res, next) => {
         .select(`
           *,
           MetodoPagoPrincipal:Metodos_Pagos!dia_dia_id_metodo_fkey(descpMetodo),
-          MetodoPagoAbono:Metodos_Pagos!dia_dia_id_metodo_abono_fkey(descpMetodo:descpMetodo)
+          MetodoPagoAbono:Metodos_Pagos!dia_dia_id_metodo_abono_fkey(descpMetodo:descpMetodo),
+          Servicio:Servicios!dia_dia_nombre_serv_fkey(sesiones)
         `)
         .not('nombre_doc', 'is', null)
         .in('nombre_doc', nombresDoctores)
@@ -483,12 +485,6 @@ const getRecords = async (req, res, next) => {
         throw err;
       }
       console.log('Datos crudos de dia_dia (doctores):', data);
-      // Agregar un log específico para el registro con id 35
-      const record35 = data.find(record => record.id === 35);
-      if (record35) {
-        console.log('Registro con id 35 (crudo):', record35);
-        console.log('MetodoPagoAbono para id 35:', record35.MetodoPagoAbono);
-      }
       doctorRecords = data;
     } else {
       console.log('No hay doctores para esta sede, omitiendo consulta de registros de doctores');
@@ -502,7 +498,8 @@ const getRecords = async (req, res, next) => {
         .select(`
           *,
           MetodoPagoPrincipal:Metodos_Pagos!dia_dia_id_metodo_fkey(descpMetodo),
-          MetodoPagoAbono:Metodos_Pagos!dia_dia_id_metodo_abono_fkey(descpMetodo:descpMetodo)
+          MetodoPagoAbono:Metodos_Pagos!dia_dia_id_metodo_abono_fkey(descpMetodo:descpMetodo),
+          Servicio:Servicios!dia_dia_nombre_serv_fkey(sesiones)
         `)
         .not('nombre_aux', 'is', null)
         .in('nombre_aux', nombresAuxiliares)
@@ -515,12 +512,6 @@ const getRecords = async (req, res, next) => {
         throw err;
       }
       console.log('Datos crudos de dia_dia (auxiliares):', data);
-      // Agregar un log específico para el registro con id 35
-      const record35 = data.find(record => record.id === 35);
-      if (record35) {
-        console.log('Registro con id 35 (crudo):', record35);
-        console.log('MetodoPagoAbono para id 35:', record35.MetodoPagoAbono);
-      }
       auxRecords = data;
     } else {
       console.log('No hay auxiliares para esta sede, omitiendo consulta de registros de auxiliares');
@@ -541,10 +532,15 @@ const getRecords = async (req, res, next) => {
         descuento: record.dcto ?? 0,
         valor_total: record.valor_total ?? 0,
         fecha: record.fecha_inicio,
+        fechaFinal: record.fecha_final,
         metodoPago: record.MetodoPagoPrincipal ? record.MetodoPagoPrincipal.descpMetodo : null,
         metodoPagoAbono: record.MetodoPagoAbono ? record.MetodoPagoAbono.descpMetodo : null,
         idPorc: record.id_porc,
-        fechaFinal: record.fecha_final,
+        valor_liquidado: record.valor_liquidado,
+        id_cuenta: record.id_cuenta,
+        id_cuenta_abono: record.id_cuenta_abono,
+        esPacientePropio: record.es_paciente_propio,
+        sesiones: record.Servicio ? record.Servicio.sesiones : 1, // Obtenemos las sesiones desde Servicios
       };
       return formattedRecord;
     });
@@ -592,7 +588,6 @@ const deleteRecords = async (req, res, next) => {
     next(err);
   }
 };
-
 const createLiquidation = async (req, res, next) => {
   try {
     console.log('Iniciando createLiquidation con datos:', req.body);
@@ -607,14 +602,60 @@ const createLiquidation = async (req, res, next) => {
       throw err;
     }
 
-    // Verificar que los servicios enviados cumplen con los criterios de liquidación
-    const idsServicios = servicios.map(servicio => servicio.id);
+    // Verificar si el valor de "doctor" está en la tabla Doctores o Auxiliares
+    let nombreDoc = null;
+    let nombreAux = null;
+
+    // Consultar en la tabla Doctores
+    const { data: doctorExists, error: doctorError } = await supabase
+      .from('Doctores')
+      .select('nombre_doc')
+      .eq('nombre_doc', doctor)
+      .single();
+
+    if (doctorError && doctorError.code !== 'PGRST116') {
+      console.error('Error al consultar la tabla Doctores:', doctorError);
+      const err = new Error('Error al verificar el doctor');
+      err.statusCode = 500;
+      throw err;
+    }
+
+    if (doctorExists) {
+      nombreDoc = doctor;
+    } else {
+      // Si no está en Doctores, consultar en la tabla Auxiliares
+      const { data: auxiliarExists, error: auxiliarError } = await supabase
+        .from('Auxiliares')
+        .select('nombre_aux')
+        .eq('nombre_aux', doctor)
+        .single();
+
+      if (auxiliarError && auxiliarError.code !== 'PGRST116') {
+        console.error('Error al consultar la tabla Auxiliares:', auxiliarError);
+        const err = new Error('Error al verificar el auxiliar');
+        err.statusCode = 500;
+        throw err;
+      }
+
+      if (auxiliarExists) {
+        nombreAux = doctor;
+      } else {
+        console.error('El nombre no está registrado ni como doctor ni como auxiliar:', doctor);
+        const err = new Error(`El nombre "${doctor}" no está registrado ni en la tabla Doctores ni en la tabla Auxiliares.`);
+        err.statusCode = 400;
+        throw err;
+      }
+    }
+
+    // `servicios` es un array de grupos, donde cada grupo es un array de registros de `dia_dia`
+    const registrosAplanados = servicios.flat();
+    const idsServicios = registrosAplanados.map(servicio => servicio.id);
     console.log('IDs de servicios a liquidar:', idsServicios);
 
-    // Consultar los registros en dia_dia para validar que cumplen con los criterios
+    // Consultar los registros en dia_dia
     const { data: registros, error: registrosError } = await supabase
       .from('dia_dia')
-      .select('*, Porcentajes!id_porc(porcentaje)') // Incluimos el porcentaje desde la tabla Porcentajes
+      .select('*, Porcentaje_pagos!id_porc(id_porc, porcentaje)')
       .in('id', idsServicios);
 
     if (registrosError) {
@@ -631,80 +672,94 @@ const createLiquidation = async (req, res, next) => {
       throw err;
     }
 
-    // Validar que todos los registros cumplen con los criterios de liquidación
-    const invalidRecords = registros.filter(record => !record.fecha_final || record.valor_liquidado !== 0);
-    if (invalidRecords.length > 0) {
-      console.error('Registros no válidos para liquidación:', invalidRecords);
-      const err = new Error('Algunos registros no cumplen con los criterios para liquidación (fecha_final no null y valor_liquidado = 0)');
-      err.statusCode = 400;
-      throw err;
-    }
+    // Preparar los datos para insertar en Historial_Liquidacion
+    const liquidaciones = await Promise.all(
+      registros.map(async (record) => {
+        // Validar que paciente no sea null
+        if (!record.paciente) {
+          console.error('El campo paciente es null para el registro:', record);
+          throw new Error('El campo paciente no puede ser null');
+        }
 
-    // Calcular el valor a liquidar para cada registro usando el porcentaje de id_porc
-    const updatedRecords = registros.map(record => {
-      const porcentaje = record.Porcentajes.porcentaje / 100; // Obtenemos el porcentaje desde la tabla Porcentajes
-      const valorLiquidado = record.valor_total * porcentaje;
-      return {
-        id: record.id,
-        valor_liquidado: valorLiquidado,
-      };
-    });
+        // Validar que id_porc y Porcentaje_pagos existan
+        if (!record.Porcentaje_pagos || !record.Porcentaje_pagos.id_porc) {
+          console.error('El campo id_porc es null o no está definido para el registro:', record);
+          throw new Error('El campo id_porc no puede ser null. Asegúrate de que todos los registros en dia_dia tengan un id_porc válido.');
+        }
 
-    // Actualizar los registros en dia_dia con el valor_liquidado calculado
-    const updatePromises = updatedRecords.map(record =>
-      supabase
-        .from('dia_dia')
-        .update({ valor_liquidado: record.valor_liquidado })
-        .eq('id', record.id)
+        // Validar que nombre_aux exista en la tabla Auxiliares (si aplica)
+        let auxName = null;
+        if (record.nombre_aux) {
+          const { data: auxExists, error: auxError } = await supabase
+            .from('Auxiliares')
+            .select('nombre_aux')
+            .eq('nombre_aux', record.nombre_aux)
+            .single();
+
+          if (auxError && auxError.code !== 'PGRST116') {
+            console.error('Error al consultar la tabla Auxiliares para nombre_aux:', auxError);
+            throw new Error('Error al verificar el auxiliar');
+          }
+
+          if (auxExists) {
+            auxName = record.nombre_aux;
+          } else {
+            console.warn(`El auxiliar "${record.nombre_aux}" no está registrado en la tabla Auxiliares. Asignando null.`);
+          }
+        }
+
+        // Calcular el valor_pagado usando el porcentaje
+        const porcentaje = record.Porcentaje_pagos.porcentaje / 100;
+        const valorPagado = record.valor_total * porcentaje;
+
+        return {
+          paciente: record.paciente,
+          doc_id: record.doc_id || 0,
+          nombre_doc: nombreDoc,
+          nombre_serv: record.nombre_serv,
+          fecha_inicio: fechaInicio,
+          fecha_final: fechaFin,
+          fecha_liquidacion: fechaLiquidacion, // Agregamos el campo fecha_liquidacion
+          abono: record.abono || 0,
+          id_porc: record.Porcentaje_pagos.id_porc,
+          id_metodo: record.id_metodo || null,
+          dcto: record.dcto || 0,
+          valor_total: record.valor_total || 0,
+          es_paciente_propio: record.es_paciente_propio || false,
+          nombre_aux: nombreAux || auxName,
+          id_cuenta: record.id_cuenta || null,
+          id_cuenta_abono: record.id_cuenta_abono || null,
+          id_metodo_abono: record.id_metodo_abono || null,
+          valor_pagado: valorPagado,
+        };
+      })
     );
 
-    const updateResults = await Promise.all(updatePromises);
-    const updateErrors = updateResults.filter(result => result.error);
-    if (updateErrors.length > 0) {
-      console.error('Error al actualizar valor_liquidado en dia_dia:', updateErrors);
-      const err = new Error('Error al actualizar los registros liquidados');
+    // Guardar las liquidaciones en Historial_Liquidacion
+    const { data: liquidacionesInsertadas, error: insertError } = await supabase
+      .from('Historial_Liquidacion')
+      .insert(liquidaciones)
+      .select();
+
+    if (insertError) {
+      console.error('Error al guardar las liquidaciones:', insertError);
+      const err = new Error('Error al guardar las liquidaciones');
       err.statusCode = 500;
       throw err;
     }
-    console.log('Registros actualizados con valor_liquidado:', updatedRecords);
+    console.log('Liquidaciones creadas exitosamente:', liquidacionesInsertadas);
 
-    // Guardar la liquidación en Historial_Liquidaciones
-    const { data, error } = await supabase
-      .from('Historial_Liquidaciones')
-      .insert([
-        {
-          doctor,
-          fecha_inicio: fechaInicio,
-          fecha_fin: fechaFin,
-          servicios, // Guardamos los servicios liquidados
-          total_liquidado: totalLiquidado,
-          fecha_liquidacion: fechaLiquidacion,
-        },
-      ])
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Error al guardar la liquidación:', error);
-      const err = new Error('Error al guardar la liquidación');
-      err.statusCode = 500;
-      throw err;
-    }
-    console.log('Liquidación creada exitosamente:', data);
-
-    res.status(201).json(data);
+    res.status(201).json(liquidacionesInsertadas);
     console.log('Respuesta enviada al cliente:', res.statusCode);
   } catch (err) {
     console.error('Error en createLiquidation:', err.message);
     next(err);
   }
 };
-
 const getLiquidations = async (req, res, next) => {
   try {
     console.log('Iniciando getLiquidations');
 
-    // Obtener el id_sede desde los parámetros de la solicitud
     const { id_sede } = req.query;
     console.log('id_sede recibido:', id_sede);
 
@@ -715,7 +770,6 @@ const getLiquidations = async (req, res, next) => {
       throw err;
     }
 
-    // Convertir id_sede a número entero
     const sedeId = parseInt(id_sede, 10);
     console.log('id_sede convertido a número:', sedeId);
 
@@ -726,23 +780,143 @@ const getLiquidations = async (req, res, next) => {
       throw err;
     }
 
-    // Consultar liquidaciones filtradas por id_sede
-    console.log('Consultando liquidaciones para id_sede:', sedeId);
-    const { data, error } = await supabase
-      .from('Historial_Liquidaciones')
-      .select('*')
-      .eq('id_sede', sedeId) // Filtrar por id_sede
-      .order('fecha_liquidacion', { ascending: false });
+    // Consultar doctores y auxiliares de la sede
+    console.log('Consultando doctores para id_sede:', sedeId);
+    const { data: doctores, error: doctoresError } = await supabase
+      .from('Doctores')
+      .select('nombre_doc')
+      .eq('id_sede', sedeId);
 
-    if (error) {
-      console.error('Error al obtener el historial de liquidaciones:', error);
-      const err = new Error('Error al obtener el historial de liquidaciones');
+    if (doctoresError) {
+      console.error('Error al obtener los doctores:', doctoresError);
+      const err = new Error('Error al obtener los doctores');
       err.statusCode = 500;
       throw err;
     }
-    console.log(`Liquidaciones obtenidas: ${data.length} liquidaciones`, data);
+    console.log('Doctores obtenidos:', doctores);
 
-    // Configurar cabeceras para evitar caché
+    const nombresDoctores = doctores.map(doctor => doctor.nombre_doc);
+    console.log('Nombres de doctores:', nombresDoctores);
+
+    console.log('Consultando auxiliares para id_sede:', sedeId);
+    const { data: auxiliares, error: auxiliaresError } = await supabase
+      .from('Auxiliares')
+      .select('nombre_aux')
+      .eq('id_sede', sedeId);
+
+    if (auxiliaresError) {
+      console.error('Error al obtener los auxiliares:', auxiliaresError);
+      const err = new Error('Error al obtener los auxiliares');
+      err.statusCode = 500;
+      throw err;
+    }
+    console.log('Auxiliares obtenidos:', auxiliares);
+
+    const nombresAuxiliares = auxiliares.map(auxiliar => auxiliar.nombre_aux);
+    console.log('Nombres de auxiliares:', nombresAuxiliares);
+
+    // Consultar liquidaciones para doctores
+    let doctorLiquidations = [];
+    if (nombresDoctores.length > 0) {
+      console.log('Consultando liquidaciones para doctores con nombres:', nombresDoctores);
+      const { data, error } = await supabase
+        .from('Historial_Liquidacion')
+        .select(`
+          *,
+          MetodoPagoPrincipal:Metodos_Pagos!Historial_Liquidacion_id_metodo_fkey(descpMetodo),
+          MetodoPagoAbono:Metodos_Pagos!Historial_Liquidacion_id_metodo_abono_fkey(descpMetodo),
+          Porcentaje_pagos!id_porc(porcentaje)
+        `)
+        .not('nombre_doc', 'is', null)
+        .in('nombre_doc', nombresDoctores)
+        .order('fecha_inicio', { ascending: false });
+
+      if (error) {
+        console.error('Error al obtener las liquidaciones de doctores:', error);
+        const err = new Error('Error al obtener las liquidaciones de doctores');
+        err.statusCode = 500;
+        throw err;
+      }
+      console.log('Liquidaciones de doctores obtenidas:', data);
+      doctorLiquidations = data;
+    } else {
+      console.log('No hay doctores para esta sede, omitiendo consulta de liquidaciones de doctores');
+    }
+
+    // Consultar liquidaciones para auxiliares
+    let auxLiquidations = [];
+    if (nombresAuxiliares.length > 0) {
+      console.log('Consultando liquidaciones para auxiliares con nombres:', nombresAuxiliares);
+      const { data, error } = await supabase
+        .from('Historial_Liquidacion')
+        .select(`
+          *,
+          MetodoPagoPrincipal:Metodos_Pagos!Historial_Liquidacion_id_metodo_fkey(descpMetodo),
+          MetodoPagoAbono:Metodos_Pagos!Historial_Liquidacion_id_metodo_abono_fkey(descpMetodo),
+          Porcentaje_pagos!id_porc(porcentaje)
+        `)
+        .not('nombre_aux', 'is', null)
+        .in('nombre_aux', nombresAuxiliares)
+        .order('fecha_inicio', { ascending: false });
+
+      if (error) {
+        console.error('Error al obtener las liquidaciones de auxiliares:', error);
+        const err = new Error('Error al obtener las liquidaciones de auxiliares');
+        err.statusCode = 500;
+        throw err;
+      }
+      console.log('Liquidaciones de auxiliares obtenidas:', data);
+      auxLiquidations = data;
+    } else {
+      console.log('No hay auxiliares para esta sede, omitiendo consulta de liquidaciones de auxiliares');
+    }
+
+    const rawLiquidations = [...doctorLiquidations, ...auxLiquidations];
+    console.log(`Liquidaciones totales obtenidas: ${rawLiquidations.length} registros`, rawLiquidations);
+
+    // Agrupar las liquidaciones
+    const groupedLiquidations = rawLiquidations.reduce((acc, record) => {
+      const key = `${record.nombre_doc || record.nombre_aux}_${record.fecha_inicio}_${record.fecha_final}_${record.fecha_liquidacion}`; // Incluimos fecha_liquidacion en la clave
+      if (!acc[key]) {
+        acc[key] = {
+          doctor: record.nombre_doc || record.nombre_aux,
+          fecha_inicio: record.fecha_inicio,
+          fecha_final: record.fecha_final,
+          fecha_liquidacion: record.fecha_liquidacion, // Agregamos fecha_liquidacion al grupo
+          servicios: [],
+          total_liquidado: 0,
+        };
+      }
+      acc[key].servicios.push({
+        paciente: record.paciente,
+        nombre_doc: record.nombre_doc,
+        nombre_serv: record.nombre_serv,
+        nombre_aux: record.nombre_aux,
+        abono: record.abono,
+        id_porc: record.id_porc,
+        porcentaje: record.Porcentaje_pagos ? record.Porcentaje_pagos.porcentaje : null,
+        id_metodo: record.id_metodo,
+        metodoPago: record.MetodoPagoPrincipal ? record.MetodoPagoPrincipal.descpMetodo : null,
+        id_metodo_abono: record.id_metodo_abono,
+        metodoPagoAbono: record.MetodoPagoAbono ? record.MetodoPagoAbono.descpMetodo : null,
+        dcto: record.dcto,
+        valor_total: record.valor_total,
+        es_paciente_propio: record.es_paciente_propio,
+        id_cuenta: record.id_cuenta,
+        id_cuenta_abono: record.id_cuenta_abono,
+        valor_pagado: record.valor_pagado,
+      });
+      acc[key].total_liquidado += record.valor_pagado;
+      return acc;
+    }, {});
+
+    const liquidations = Object.keys(groupedLiquidations).map((key, index) => ({
+      id: `group_${index}`,
+      ...groupedLiquidations[key],
+    }));
+
+    console.log('Liquidaciones agrupadas:', liquidations);
+
     res.set({
       'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
       'Pragma': 'no-cache',
@@ -750,7 +924,7 @@ const getLiquidations = async (req, res, next) => {
       'Surrogate-Control': 'no-store',
     });
 
-    res.status(200).json(data);
+    res.status(200).json(liquidations);
     console.log('Respuesta enviada al cliente:', res.statusCode);
   } catch (err) {
     console.error('Error en getLiquidations:', err.message);
@@ -758,11 +932,69 @@ const getLiquidations = async (req, res, next) => {
     next(err);
   }
 };
+const deleteLiquidations = async (req, res, next) => {
+  try {
+    console.log('Iniciando deleteLiquidations con datos:', req.body);
 
+    const { groups } = req.body; // Recibimos un array de grupos a eliminar
+
+    if (!groups || !Array.isArray(groups) || groups.length === 0) {
+      console.error('Grupos inválidos:', groups);
+      const err = new Error('Se requiere un array de grupos para eliminar');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // Procesar cada grupo para eliminar los registros correspondientes
+    for (const group of groups) {
+      const { doctor, fecha_inicio, fecha_final, fecha_liquidacion } = group;
+
+      if (!doctor || !fecha_inicio || !fecha_final || !fecha_liquidacion) {
+        console.error('Datos incompletos en el grupo:', group);
+        const err = new Error('Faltan datos requeridos en uno de los grupos');
+        err.statusCode = 400;
+        throw err;
+      }
+
+      // Determinar si el doctor es un doctor o un auxiliar
+      const { data: doctorExists } = await supabase
+        .from('Doctores')
+        .select('nombre_doc')
+        .eq('nombre_doc', doctor)
+        .single();
+
+      const isDoctor = !!doctorExists;
+
+      // Eliminar los registros de Historial_Liquidacion
+      const { error } = await supabase
+        .from('Historial_Liquidacion')
+        .delete()
+        .eq(isDoctor ? 'nombre_doc' : 'nombre_aux', doctor)
+        .eq('fecha_inicio', fecha_inicio)
+        .eq('fecha_final', fecha_final)
+        .eq('fecha_liquidacion', fecha_liquidacion);
+
+      if (error) {
+        console.error('Error al eliminar las liquidaciones:', error);
+        const err = new Error('Error al eliminar las liquidaciones');
+        err.statusCode = 500;
+        throw err;
+      }
+    }
+
+    console.log(`Liquidaciones eliminadas: ${groups.length} grupos`);
+    res.status(200).json({ message: 'Liquidaciones eliminadas exitosamente' });
+    console.log('Respuesta enviada al cliente:', res.statusCode);
+  } catch (err) {
+    console.error('Error en deleteLiquidations:', err.message);
+    next(err);
+  }
+};
 module.exports = {
   createRecord,
   getRecords,
   deleteRecords,
   createLiquidation,
   getLiquidations,
+  deleteLiquidations,
 };
