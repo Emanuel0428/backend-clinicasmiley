@@ -12,11 +12,15 @@ const createRecord = async (req, res, next) => {
       docId,
       servicio,
       abono,
+      metodoPagoAbono, // Método de pago para el abono
+      id_cuenta_abono, // Cuenta para el abono (si metodoPagoAbono es "Transferencia")
       descuento,
       esPacientePropio,
       fecha,
       metodoPago, // Este será el descpMetodo seleccionado desde el frontend
+      id_cuenta, // Cuenta para el valor pagado (si metodoPago es "Transferencia")
       esAuxiliar,
+      valorPagado, // Valor pagado para calcular valor_liquidado y guardar en valor_pagado
     } = req.body;
 
     // Obtener el valor y el número de sesiones del servicio desde la tabla Servicios
@@ -35,22 +39,45 @@ const createRecord = async (req, res, next) => {
     }
     console.log('Datos del servicio encontrados:', servicioData);
 
-    // Buscar el id_metodo basado en el descpMetodo recibido
-    console.log(`Buscando id_metodo para el método de pago: ${metodoPago} en la tabla Metodos_Pagos`);
-    const { data: metodoPagoData, error: metodoPagoError } = await supabase
-      .from('Metodos_Pagos')
-      .select('id_metodo')
-      .eq('descpMetodo', metodoPago)
-      .single();
+    // Buscar el id_metodo basado en el descpMetodo recibido (para el valor pagado)
+    let idMetodo = null;
+    if (metodoPago) {
+      console.log(`Buscando id_metodo para el método de pago: ${metodoPago} en la tabla Metodos_Pagos`);
+      const { data: metodoPagoData, error: metodoPagoError } = await supabase
+        .from('Metodos_Pagos')
+        .select('id_metodo')
+        .eq('descpMetodo', metodoPago)
+        .single();
 
-    if (metodoPagoError || !metodoPagoData) {
-      console.error('Error al buscar el método de pago:', metodoPagoError);
-      const err = new Error('Método de pago no encontrado');
-      err.statusCode = 404;
-      throw err;
+      if (metodoPagoError || !metodoPagoData) {
+        console.error('Error al buscar el método de pago:', metodoPagoError);
+        const err = new Error('Método de pago no encontrado');
+        err.statusCode = 404;
+        throw err;
+      }
+      idMetodo = metodoPagoData.id_metodo;
+      console.log(`id_metodo encontrado: ${idMetodo}`);
     }
-    const idMetodo = metodoPagoData.id_metodo;
-    console.log(`id_metodo encontrado: ${idMetodo}`);
+
+    // Buscar el id_metodo para el abono (si aplica)
+    let idMetodoAbono = null;
+    if (metodoPagoAbono) {
+      console.log(`Buscando id_metodo para el método de pago del abono: ${metodoPagoAbono} en la tabla Metodos_Pagos`);
+      const { data: metodoPagoAbonoData, error: metodoPagoAbonoError } = await supabase
+        .from('Metodos_Pagos')
+        .select('id_metodo')
+        .eq('descpMetodo', metodoPagoAbono)
+        .single();
+
+      if (metodoPagoAbonoError || !metodoPagoAbonoData) {
+        console.error('Error al buscar el método de pago del abono:', metodoPagoAbonoError);
+        const err = new Error('Método de pago del abono no encontrado');
+        err.statusCode = 404;
+        throw err;
+      }
+      idMetodoAbono = metodoPagoAbonoData.id_metodo;
+      console.log(`id_metodo para el abono encontrado: ${idMetodoAbono}`);
+    }
 
     // Determinar el id_porc
     let idPorc;
@@ -79,22 +106,27 @@ const createRecord = async (req, res, next) => {
       );
     }
 
-    // Calcular el valor total
+    // Calcular el valor_total (ajustado si hay descuento)
     let valorTotal = servicioData.valor;
-    console.log(`Valor inicial del servicio: ${valorTotal}`);
     if (descuento !== null && descuento > 0) {
       valorTotal -= descuento;
-      console.log(`Aplicando descuento de ${descuento}. Nuevo valor: ${valorTotal}`);
+      console.log(`Aplicando descuento de ${descuento}. Nuevo valor_total: ${valorTotal}`);
     }
-    if (abono !== null && abono > 0) {
-      valorTotal -= abono;
-      console.log(`Aplicando abono de ${abono}. Nuevo valor: ${valorTotal}`);
+    console.log(`Valor total final (después de descuento, si aplica): ${valorTotal}`);
+
+    // Determinar el id_cuenta a usar (solo si metodoPago es "Transferencia")
+    let finalIdCuenta = null;
+    if (metodoPago === 'Transferencia' && id_cuenta) {
+      finalIdCuenta = id_cuenta;
+      console.log(`Asignando id_cuenta: ${finalIdCuenta} (usado para el valor pagado)`);
     }
-    if (valorTotal < 0) {
-      console.log('Valor total negativo, ajustando a 0');
-      valorTotal = 0;
+
+    // Determinar el id_cuenta_abono a usar (solo si metodoPagoAbono es "Transferencia")
+    let finalIdCuentaAbono = null;
+    if (metodoPagoAbono === 'Transferencia' && id_cuenta_abono) {
+      finalIdCuentaAbono = id_cuenta_abono;
+      console.log(`Asignando id_cuenta_abono: ${finalIdCuentaAbono} (usado para el abono)`);
     }
-    console.log(`Valor total final: ${valorTotal}`);
 
     let fechaFinal = null;
     let recordData;
@@ -102,6 +134,27 @@ const createRecord = async (req, res, next) => {
     let statusCode = 201;
 
     if (servicioData.sesiones === 1) {
+      // Calcular valor_liquidado para la primera sesión o servicios de 1 sesión
+      let valorLiquidado = servicioData.valor; // Usamos el valor original del servicio para valor_liquidado
+      console.log(`Valor liquidado inicial (valor original del servicio): ${valorLiquidado}`);
+      if (descuento !== null && descuento > 0) {
+        valorLiquidado -= descuento;
+        console.log(`Aplicando descuento de ${descuento}. Nuevo valor liquidado: ${valorLiquidado}`);
+      }
+      if (abono !== null && abono > 0) {
+        valorLiquidado -= abono;
+        console.log(`Aplicando abono de ${abono}. Nuevo valor liquidado: ${valorLiquidado}`);
+      }
+      if (valorPagado !== null && valorPagado > 0) {
+        valorLiquidado -= valorPagado;
+        console.log(`Aplicando valor pagado de ${valorPagado}. Nuevo valor liquidado: ${valorLiquidado}`);
+      }
+      if (valorLiquidado < 0) {
+        console.log('Valor liquidado negativo, ajustando a 0');
+        valorLiquidado = 0;
+      }
+      console.log(`Valor liquidado final: ${valorLiquidado}`);
+
       console.log('El servicio tiene 1 sesión. Asignando fecha_final igual a fecha_inicio:', fecha);
       fechaFinal = fecha;
 
@@ -111,11 +164,17 @@ const createRecord = async (req, res, next) => {
         nombre_serv: servicio,
         abono: abono !== null ? abono : null,
         dcto: descuento !== null ? descuento : null,
-        valor_total: valorTotal,
+        valor_total: valorTotal, // Usamos el valor_total ajustado
+        valor_liquidado: valorLiquidado,
+        valor_pagado: valorPagado !== null ? valorPagado : null, // Guardamos el valor_pagado
         fecha_inicio: fecha,
         fecha_final: fechaFinal,
-        id_metodo: idMetodo, // Usamos id_metodo en lugar de metodo_pago
+        id_metodo: idMetodo,
+        id_metodo_abono: idMetodoAbono,
+        id_cuenta: finalIdCuenta,
+        id_cuenta_abono: finalIdCuentaAbono,
         id_porc: idPorc,
+        es_paciente_propio: esPacientePropio,
       };
     } else if (servicioData.sesiones === 2) {
       console.log(
@@ -139,22 +198,46 @@ const createRecord = async (req, res, next) => {
 
       if (existingRecord) {
         console.log(
-          `Registro previo encontrado (ID: ${existingRecord.id}). Actualizando su fecha_final con la nueva fecha_inicio: ${fecha}`
+          `Registro previo encontrado (ID: ${existingRecord.id}). Actualizando su fecha_final y otros campos con los nuevos valores.`
         );
+
+        // Calcular el nuevo valor_liquidado basado en el valor_liquidado existente
+        let valorLiquidado = existingRecord.valor_liquidado;
+        console.log(`Valor liquidado existente (de la primera sesión): ${valorLiquidado}`);
+        if (valorPagado !== null && valorPagado > 0) {
+          valorLiquidado -= valorPagado;
+          console.log(`Aplicando valor pagado de ${valorPagado}. Nuevo valor liquidado: ${valorLiquidado}`);
+        }
+        if (valorLiquidado < 0) {
+          console.log('Valor liquidado negativo, ajustando a 0');
+          valorLiquidado = 0;
+        }
+        console.log(`Valor liquidado final: ${valorLiquidado}`);
+
+        // Actualizar el registro existente sin sobrescribir abono, dcto, id_cuenta_abono ni id_metodo_abono
         const { data: updatedRecord, error: updateError } = await supabase
           .from('dia_dia')
-          .update({ fecha_final: fecha })
+          .update({
+            fecha_final: fecha,
+            valor_total: valorTotal, // Usamos el valor_total ajustado
+            valor_liquidado: valorLiquidado,
+            valor_pagado: valorPagado !== null ? valorPagado : null, // Actualizamos el valor_pagado
+            id_metodo: idMetodo,
+            id_cuenta: finalIdCuenta,
+            id_porc: idPorc,
+            es_paciente_propio: esPacientePropio,
+          })
           .eq('id', existingRecord.id)
           .select()
           .single();
 
         if (updateError) {
-          console.error('Error al actualizar la fecha_final del registro previo:', updateError);
+          console.error('Error al actualizar el registro previo:', updateError);
           const err = new Error('Error al actualizar el registro previo');
           err.statusCode = 500;
           throw err;
         }
-        console.log('Fecha_final del registro previo actualizada exitosamente:', updatedRecord);
+        console.log('Registro previo actualizado exitosamente:', updatedRecord);
 
         responseData = {
           id: updatedRecord.id,
@@ -163,15 +246,41 @@ const createRecord = async (req, res, next) => {
           docId: updatedRecord.doc_id,
           servicio: updatedRecord.nombre_serv,
           abono: updatedRecord.abono,
+          metodoPagoAbono: metodoPagoAbono,
+          id_cuenta_abono: updatedRecord.id_cuenta_abono,
           descuento: updatedRecord.dcto,
-          total: updatedRecord.valor_total,
+          valor_total: updatedRecord.valor_total,
+          valor_liquidado: updatedRecord.valor_liquidado,
+          valor_pagado: updatedRecord.valor_pagado, // Incluimos valor_pagado en la respuesta
           fecha: updatedRecord.fecha_inicio,
           fechaFinal: updatedRecord.fecha_final,
-          metodoPago: metodoPago, // Devolvemos el descpMetodo original
+          metodoPago: metodoPago,
+          id_cuenta: updatedRecord.id_cuenta,
           idPorc: updatedRecord.id_porc,
         };
         statusCode = 200;
       } else {
+        // Calcular valor_liquidado para la primera sesión
+        let valorLiquidado = servicioData.valor; // Usamos el valor original del servicio para valor_liquidado
+        console.log(`Valor liquidado inicial (valor original del servicio): ${valorLiquidado}`);
+        if (descuento !== null && descuento > 0) {
+          valorLiquidado -= descuento;
+          console.log(`Aplicando descuento de ${descuento}. Nuevo valor liquidado: ${valorLiquidado}`);
+        }
+        if (abono !== null && abono > 0) {
+          valorLiquidado -= abono;
+          console.log(`Aplicando abono de ${abono}. Nuevo valor liquidado: ${valorLiquidado}`);
+        }
+        if (valorPagado !== null && valorPagado > 0) {
+          valorLiquidado -= valorPagado;
+          console.log(`Aplicando valor pagado de ${valorPagado}. Nuevo valor liquidado: ${valorLiquidado}`);
+        }
+        if (valorLiquidado < 0) {
+          console.log('Valor liquidado negativo, ajustando a 0');
+          valorLiquidado = 0;
+        }
+        console.log(`Valor liquidado final: ${valorLiquidado}`);
+
         console.log('No se encontraron registros previos con fecha_final null. Este es el primer registro de 2 sesiones.');
         fechaFinal = null;
 
@@ -181,14 +290,41 @@ const createRecord = async (req, res, next) => {
           nombre_serv: servicio,
           abono: abono !== null ? abono : null,
           dcto: descuento !== null ? descuento : null,
-          valor_total: valorTotal,
+          valor_total: valorTotal, // Usamos el valor_total ajustado
+          valor_liquidado: valorLiquidado,
+          valor_pagado: valorPagado !== null ? valorPagado : null, // Guardamos el valor_pagado
           fecha_inicio: fecha,
           fecha_final: fechaFinal,
-          id_metodo: idMetodo, // Usamos id_metodo
+          id_metodo: idMetodo,
+          id_metodo_abono: idMetodoAbono,
+          id_cuenta: finalIdCuenta,
+          id_cuenta_abono: finalIdCuentaAbono,
           id_porc: idPorc,
+          es_paciente_propio: esPacientePropio,
         };
       }
     } else {
+      // Calcular valor_liquidado para servicios con más de 2 sesiones
+      let valorLiquidado = servicioData.valor; // Usamos el valor original del servicio para valor_liquidado
+      console.log(`Valor liquidado inicial (valor original del servicio): ${valorLiquidado}`);
+      if (descuento !== null && descuento > 0) {
+        valorLiquidado -= descuento;
+        console.log(`Aplicando descuento de ${descuento}. Nuevo valor liquidado: ${valorLiquidado}`);
+      }
+      if (abono !== null && abono > 0) {
+        valorLiquidado -= abono;
+        console.log(`Aplicando abono de ${abono}. Nuevo valor liquidado: ${valorLiquidado}`);
+      }
+      if (valorPagado !== null && valorPagado > 0) {
+        valorLiquidado -= valorPagado;
+        console.log(`Aplicando valor pagado de ${valorPagado}. Nuevo valor liquidado: ${valorLiquidado}`);
+      }
+      if (valorLiquidado < 0) {
+        console.log('Valor liquidado negativo, ajustando a 0');
+        valorLiquidado = 0;
+      }
+      console.log(`Valor liquidado final: ${valorLiquidado}`);
+
       console.log(`El servicio tiene ${servicioData.sesiones} sesiones. No se maneja en esta lógica.`);
       fechaFinal = null;
 
@@ -198,11 +334,17 @@ const createRecord = async (req, res, next) => {
         nombre_serv: servicio,
         abono: abono !== null ? abono : null,
         dcto: descuento !== null ? descuento : null,
-        valor_total: valorTotal,
+        valor_total: valorTotal, // Usamos el valor_total ajustado
+        valor_liquidado: valorLiquidado,
+        valor_pagado: valorPagado !== null ? valorPagado : null, // Guardamos el valor_pagado
         fecha_inicio: fecha,
         fecha_final: fechaFinal,
-        id_metodo: idMetodo, // Usamos id_metodo
+        id_metodo: idMetodo,
+        id_metodo_abono: idMetodoAbono,
+        id_cuenta: finalIdCuenta,
+        id_cuenta_abono: finalIdCuentaAbono,
         id_porc: idPorc,
+        es_paciente_propio: esPacientePropio,
       };
     }
 
@@ -244,11 +386,16 @@ const createRecord = async (req, res, next) => {
       docId: data.doc_id,
       servicio: data.nombre_serv,
       abono: data.abono,
+      metodoPagoAbono: metodoPagoAbono,
+      id_cuenta_abono: data.id_cuenta_abono,
       descuento: data.dcto,
-      total: data.valor_total,
+      valor_total: data.valor_total,
+      valor_liquidado: data.valor_liquidado,
+      valor_pagado: data.valor_pagado, // Incluimos valor_pagado en la respuesta
       fecha: data.fecha_inicio,
       fechaFinal: data.fecha_final,
-      metodoPago: metodoPago, // Devolvemos el descpMetodo original
+      metodoPago: metodoPago,
+      id_cuenta: data.id_cuenta,
       idPorc: data.id_porc,
     });
     console.log('Respuesta enviada al cliente:', res.statusCode);
@@ -257,12 +404,10 @@ const createRecord = async (req, res, next) => {
     next(err);
   }
 };
-
 const getRecords = async (req, res, next) => {
   try {
     console.log('Iniciando getRecords');
 
-    // Obtener el id_sede desde los parámetros de la solicitud
     const { id_sede } = req.query;
     console.log('id_sede recibido:', id_sede);
 
@@ -273,7 +418,6 @@ const getRecords = async (req, res, next) => {
       throw err;
     }
 
-    // Convertir id_sede a número entero
     const sedeId = parseInt(id_sede, 10);
     console.log('id_sede convertido a número:', sedeId);
 
@@ -284,7 +428,6 @@ const getRecords = async (req, res, next) => {
       throw err;
     }
 
-    // Obtener los nombres de los doctores que pertenecen a la sede
     console.log('Consultando doctores para id_sede:', sedeId);
     const { data: doctores, error: doctoresError } = await supabase
       .from('Doctores')
@@ -299,11 +442,9 @@ const getRecords = async (req, res, next) => {
     }
     console.log('Doctores obtenidos:', doctores);
 
-    // Extraer solo los nombres de los doctores en un arreglo
     const nombresDoctores = doctores.map(doctor => doctor.nombre_doc);
     console.log('Nombres de doctores:', nombresDoctores);
 
-    // Obtener los nombres de los auxiliares que pertenecen a la sede
     console.log('Consultando auxiliares para id_sede:', sedeId);
     const { data: auxiliares, error: auxiliaresError } = await supabase
       .from('Auxiliares')
@@ -318,11 +459,9 @@ const getRecords = async (req, res, next) => {
     }
     console.log('Auxiliares obtenidos:', auxiliares);
 
-    // Extraer solo los nombres de los auxiliares en un arreglo
     const nombresAuxiliares = auxiliares.map(auxiliar => auxiliar.nombre_aux);
     console.log('Nombres de auxiliares:', nombresAuxiliares);
 
-    // Consulta 1: Registros asociados a doctores
     let doctorRecords = [];
     if (nombresDoctores.length > 0) {
       console.log('Consultando registros de dia_dia para doctores con nombres:', nombresDoctores);
@@ -330,10 +469,11 @@ const getRecords = async (req, res, next) => {
         .from('dia_dia')
         .select(`
           *,
-          Metodos_Pagos(descpMetodo)
+          MetodoPagoPrincipal:Metodos_Pagos!dia_dia_id_metodo_fkey(descpMetodo),
+          MetodoPagoAbono:Metodos_Pagos!dia_dia_id_metodo_abono_fkey(descpMetodo:descpMetodo)
         `)
-        .not('nombre_doc', 'is', null) // Solo registros con nombre_doc
-        .in('nombre_doc', nombresDoctores) // Filtrar por nombres de doctores
+        .not('nombre_doc', 'is', null)
+        .in('nombre_doc', nombresDoctores)
         .order('fecha_inicio', { ascending: false });
 
       if (error) {
@@ -342,13 +482,18 @@ const getRecords = async (req, res, next) => {
         err.statusCode = 500;
         throw err;
       }
-      console.log('Registros de doctores obtenidos:', data);
+      console.log('Datos crudos de dia_dia (doctores):', data);
+      // Agregar un log específico para el registro con id 35
+      const record35 = data.find(record => record.id === 35);
+      if (record35) {
+        console.log('Registro con id 35 (crudo):', record35);
+        console.log('MetodoPagoAbono para id 35:', record35.MetodoPagoAbono);
+      }
       doctorRecords = data;
     } else {
       console.log('No hay doctores para esta sede, omitiendo consulta de registros de doctores');
     }
 
-    // Consulta 2: Registros asociados a auxiliares
     let auxRecords = [];
     if (nombresAuxiliares.length > 0) {
       console.log('Consultando registros de dia_dia para auxiliares con nombres:', nombresAuxiliares);
@@ -356,10 +501,11 @@ const getRecords = async (req, res, next) => {
         .from('dia_dia')
         .select(`
           *,
-          Metodos_Pagos(descpMetodo)
+          MetodoPagoPrincipal:Metodos_Pagos!dia_dia_id_metodo_fkey(descpMetodo),
+          MetodoPagoAbono:Metodos_Pagos!dia_dia_id_metodo_abono_fkey(descpMetodo:descpMetodo)
         `)
-        .not('nombre_aux', 'is', null) // Solo registros con nombre_aux
-        .in('nombre_aux', nombresAuxiliares) // Filtrar por nombres de auxiliares
+        .not('nombre_aux', 'is', null)
+        .in('nombre_aux', nombresAuxiliares)
         .order('fecha_inicio', { ascending: false });
 
       if (error) {
@@ -368,30 +514,35 @@ const getRecords = async (req, res, next) => {
         err.statusCode = 500;
         throw err;
       }
-      console.log('Registros de auxiliares obtenidos:', data);
+      console.log('Datos crudos de dia_dia (auxiliares):', data);
+      // Agregar un log específico para el registro con id 35
+      const record35 = data.find(record => record.id === 35);
+      if (record35) {
+        console.log('Registro con id 35 (crudo):', record35);
+        console.log('MetodoPagoAbono para id 35:', record35.MetodoPagoAbono);
+      }
       auxRecords = data;
     } else {
       console.log('No hay auxiliares para esta sede, omitiendo consulta de registros de auxiliares');
     }
 
-    // Combinar los resultados
     const data = [...doctorRecords, ...auxRecords];
     console.log(`Registros totales obtenidos (doctores + auxiliares): ${data.length} registros`, data);
 
-    // Formatear los datos
     console.log('Formateando los registros...');
     const formattedData = data.map((record) => {
       const formattedRecord = {
         id: record.id,
-        nombreDoctor: record.nombre_doc || record.nombre_aux, // Mostrar doctor o auxiliar
+        nombreDoctor: record.nombre_doc || record.nombre_aux,
         nombrePaciente: record.paciente,
-        docId: record.doc_id, // Documento de identificación del paciente
+        docId: record.doc_id,
         servicio: record.nombre_serv,
-        abono: record.abono,
-        descuento: record.dcto,
-        total: record.valor_total,
+        abono: record.abono ?? 0,
+        descuento: record.dcto ?? 0,
+        valor_total: record.valor_total ?? 0,
         fecha: record.fecha_inicio,
-        metodoPago: record.Metodos_Pagos.descpMetodo, // Usar descpMetodo desde la relación
+        metodoPago: record.MetodoPagoPrincipal ? record.MetodoPagoPrincipal.descpMetodo : null,
+        metodoPagoAbono: record.MetodoPagoAbono ? record.MetodoPagoAbono.descpMetodo : null,
         idPorc: record.id_porc,
         fechaFinal: record.fecha_final,
       };
@@ -448,6 +599,76 @@ const createLiquidation = async (req, res, next) => {
 
     const { doctor, fechaInicio, fechaFin, servicios, totalLiquidado, fechaLiquidacion } = req.body;
 
+    // Validar que los datos necesarios estén presentes
+    if (!doctor || !fechaInicio || !fechaFin || !servicios || totalLiquidado === undefined || !fechaLiquidacion) {
+      console.error('Datos incompletos:', req.body);
+      const err = new Error('Faltan datos requeridos para crear la liquidación');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // Verificar que los servicios enviados cumplen con los criterios de liquidación
+    const idsServicios = servicios.map(servicio => servicio.id);
+    console.log('IDs de servicios a liquidar:', idsServicios);
+
+    // Consultar los registros en dia_dia para validar que cumplen con los criterios
+    const { data: registros, error: registrosError } = await supabase
+      .from('dia_dia')
+      .select('*, Porcentajes!id_porc(porcentaje)') // Incluimos el porcentaje desde la tabla Porcentajes
+      .in('id', idsServicios);
+
+    if (registrosError) {
+      console.error('Error al consultar los registros en dia_dia:', registrosError);
+      const err = new Error('Error al consultar los registros para liquidar');
+      err.statusCode = 500;
+      throw err;
+    }
+
+    if (!registros || registros.length !== idsServicios.length) {
+      console.error('No se encontraron todos los registros para los IDs proporcionados:', idsServicios);
+      const err = new Error('Algunos registros no fueron encontrados');
+      err.statusCode = 404;
+      throw err;
+    }
+
+    // Validar que todos los registros cumplen con los criterios de liquidación
+    const invalidRecords = registros.filter(record => !record.fecha_final || record.valor_liquidado !== 0);
+    if (invalidRecords.length > 0) {
+      console.error('Registros no válidos para liquidación:', invalidRecords);
+      const err = new Error('Algunos registros no cumplen con los criterios para liquidación (fecha_final no null y valor_liquidado = 0)');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // Calcular el valor a liquidar para cada registro usando el porcentaje de id_porc
+    const updatedRecords = registros.map(record => {
+      const porcentaje = record.Porcentajes.porcentaje / 100; // Obtenemos el porcentaje desde la tabla Porcentajes
+      const valorLiquidado = record.valor_total * porcentaje;
+      return {
+        id: record.id,
+        valor_liquidado: valorLiquidado,
+      };
+    });
+
+    // Actualizar los registros en dia_dia con el valor_liquidado calculado
+    const updatePromises = updatedRecords.map(record =>
+      supabase
+        .from('dia_dia')
+        .update({ valor_liquidado: record.valor_liquidado })
+        .eq('id', record.id)
+    );
+
+    const updateResults = await Promise.all(updatePromises);
+    const updateErrors = updateResults.filter(result => result.error);
+    if (updateErrors.length > 0) {
+      console.error('Error al actualizar valor_liquidado en dia_dia:', updateErrors);
+      const err = new Error('Error al actualizar los registros liquidados');
+      err.statusCode = 500;
+      throw err;
+    }
+    console.log('Registros actualizados con valor_liquidado:', updatedRecords);
+
+    // Guardar la liquidación en Historial_Liquidaciones
     const { data, error } = await supabase
       .from('Historial_Liquidaciones')
       .insert([
@@ -455,7 +676,7 @@ const createLiquidation = async (req, res, next) => {
           doctor,
           fecha_inicio: fechaInicio,
           fecha_fin: fechaFin,
-          servicios,
+          servicios, // Guardamos los servicios liquidados
           total_liquidado: totalLiquidado,
           fecha_liquidacion: fechaLiquidacion,
         },

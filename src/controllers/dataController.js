@@ -1,3 +1,4 @@
+// src/controllers/dataController.js
 const supabase = require('../config/supabase');
 
 const getIdSedeFromRequest = (req) => {
@@ -103,9 +104,33 @@ const getPaymentMethods = async (req, res, next) => {
   }
 };
 
+// Nueva función para obtener las cuentas bancarias
+const getAccounts = async (req, res, next) => {
+  try {
+    const id_sede = getIdSedeFromRequest(req);
+
+    const { data, error } = await supabase
+      .from('Cuentas')
+      .select('id_cuenta, cuentas')
+      .eq('id_sede', id_sede)
+      .order('cuentas', { ascending: true });
+
+    if (error) {
+      const err = new Error('Error al obtener las cuentas bancarias');
+      err.statusCode = 500;
+      throw err;
+    }
+
+    res.status(200).json(data);
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = {
   getDoctors,
   getAssistants,
   getServices,
   getPaymentMethods,
+  getAccounts, // Exportamos la nueva función
 };
