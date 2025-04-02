@@ -7,7 +7,7 @@ const {
   getAssistants,
   getServices,
   getPaymentMethods,
-  getAccounts, // Nueva función
+  getAccounts, 
 } = require('../controllers/dataController');
 
 // Protect all routes with JWT verification
@@ -15,6 +15,6 @@ router.get('/doctors', verifyToken, getDoctors);
 router.get('/assistants', verifyToken, getAssistants);
 router.get('/services', verifyToken, getServices);
 router.get('/payment-methods', verifyToken, getPaymentMethods);
-router.get('/accounts', verifyToken, getAccounts); // Nueva ruta
+router.get('/accounts', verifyToken, getAccounts);
 
 module.exports = router;
