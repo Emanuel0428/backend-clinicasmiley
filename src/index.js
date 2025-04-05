@@ -26,7 +26,6 @@ app.use('/api', userRoutes);
 app.use('/api', dataRoutes);
 app.use('/api', recordRoutes);
 app.use('/api', sedeRoutes); 
-
 // Error Handling Middleware
 app.use(errorHandler);
 
@@ -35,5 +34,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-
-module.exports = app; 

@@ -504,88 +504,11 @@ const getRecords = async (req, res, next) => {
 
 const deleteRecords = async (req, res, next) => {
   try {
-    const { ids, id_sede } = req.body;
+    const { ids } = req.body;
 
     if (!ids || !Array.isArray(ids) || ids.length === 0) {
       const err = new Error('Se requiere un array de IDs para eliminar');
       err.statusCode = 400;
-      throw err;
-    }
-
-    if (!id_sede) {
-      const err = new Error('El id_sede es requerido');
-      err.statusCode = 400;
-      throw err;
-    }
-
-    const sedeId = parseInt(id_sede, 10);
-    if (isNaN(sedeId)) {
-      const err = new Error('El id_sede debe ser un número válido');
-      err.statusCode = 400;
-      throw err;
-    }
-
-    // Fetch the records to ensure they belong to the specified sede
-    const { data: records, error: fetchError } = await supabase
-      .from('dia_dia')
-      .select('id')
-      .in('id', ids);
-
-    if (fetchError) {
-      const err = new Error('Error al verificar los registros');
-      err.statusCode = 500;
-      throw err;
-    }
-
-    // Fetch doctors and auxiliaries for the sede to validate records
-    const { data: doctores, error: doctoresError } = await supabase
-      .from('Doctores')
-      .select('nombre_doc')
-      .eq('id_sede', sedeId);
-
-    if (doctoresError) {
-      const err = new Error('Error al obtener los doctores');
-      err.statusCode = 500;
-      throw err;
-    }
-
-    const nombresDoctores = doctores.map(doctor => doctor.nombre_doc);
-
-    const { data: auxiliares, error: auxiliaresError } = await supabase
-      .from('Auxiliares')
-      .select('nombre_aux')
-      .eq('id_sede', sedeId);
-
-    if (auxiliaresError) {
-      const err = new Error('Error al obtener los auxiliares');
-      err.statusCode = 500;
-      throw err;
-    }
-
-    const nombresAuxiliares = auxiliares.map(auxiliar => auxiliar.nombre_aux);
-
-    // Fetch records to validate they belong to the sede
-    const { data: recordsToDelete, error: recordsError } = await supabase
-      .from('dia_dia')
-      .select('id, nombre_doc, nombre_aux')
-      .in('id', ids);
-
-    if (recordsError) {
-      const err = new Error('Error al obtener los registros');
-      err.statusCode = 500;
-      throw err;
-    }
-
-    // Validate that all records belong to the sede
-    const invalidRecords = recordsToDelete.filter(record => {
-      const isDoctorRecord = record.nombre_doc && nombresDoctores.includes(record.nombre_doc);
-      const isAuxiliarRecord = record.nombre_aux && nombresAuxiliares.includes(record.nombre_aux);
-      return !(isDoctorRecord || isAuxiliarRecord);
-    });
-
-    if (invalidRecords.length > 0) {
-      const err = new Error('Algunos registros no pertenecen a la sede especificada');
-      err.statusCode = 403;
       throw err;
     }
 
@@ -655,7 +578,7 @@ const createLiquidation = async (req, res, next) => {
       }
     }
 
-    const registrosAplanados = servicios;
+    const registrosAplanados = servicios.flat();
     const idsServicios = registrosAplanados.map(servicio => servicio.id);
 
     const { data: registros, error: registrosError } = await supabase
@@ -682,8 +605,9 @@ const createLiquidation = async (req, res, next) => {
           throw new Error('El campo paciente no puede ser null');
         }
 
-        const porcentaje = record.Porcentaje_pagos ? record.Porcentaje_pagos.porcentaje : (record.es_paciente_propio ? 50 : 40); // Default to 50% or 40%
-        const idPorc = record.id_porc || (record.es_paciente_propio ? 2 : 1); // Default id_porc
+        if (!record.Porcentaje_pagos || !record.Porcentaje_pagos.id_porc) {
+          throw new Error('El campo id_porc no puede ser null. Asegúrate de que todos los registros en dia_dia tengan un id_porc válido.');
+        }
 
         let auxName = null;
         if (record.nombre_aux) {
@@ -715,7 +639,7 @@ const createLiquidation = async (req, res, next) => {
           fecha_final: fechaFin,
           fecha_liquidacion: fechaLiquidacion,
           abono: record.abono || 0,
-          id_porc: idPorc,
+          id_porc: record.Porcentaje_pagos.id_porc,
           id_metodo: record.id_metodo || null,
           dcto: record.dcto || 0,
           valor_total: record.valor_total || 0,
