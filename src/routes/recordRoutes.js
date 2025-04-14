@@ -9,6 +9,7 @@ const {
   createLiquidation,
   getLiquidations,
   deleteLiquidations,
+  searchPatients,
 } = require('../controllers/recordController');
 
 // Protect all routes with JWT verification
@@ -18,5 +19,5 @@ router.delete('/records', verifyToken, deleteRecords);
 router.post('/liquidations', verifyToken, createLiquidation);
 router.get('/liquidations', verifyToken, getLiquidations);
 router.delete('/liquidations', verifyToken, deleteLiquidations);
-
+router.get('/patients/search', verifyToken, searchPatients);
 module.exports = router;
