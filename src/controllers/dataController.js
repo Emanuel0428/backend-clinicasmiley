@@ -1,4 +1,3 @@
-// src/controllers/dataController.js
 const supabase = require('../config/supabase');
 
 const getIdSedeFromRequest = (req) => {
@@ -83,6 +82,146 @@ const getServices = async (req, res, next) => {
   }
 };
 
+const addService = async (req, res, next) => {
+  try {
+    const { nombre, precio } = req.body;
+
+    if (!nombre || precio <= 0) {
+      const err = new Error('Nombre y precio válidos son requeridos');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const { data: existing, error: checkError } = await supabase
+      .from('Servicios')
+      .select('nombre_serv')
+      .eq('nombre_serv', nombre);
+
+    if (checkError) {
+      const err = new Error('Error al verificar el servicio');
+      err.statusCode = 500;
+      throw err;
+    }
+
+    if (existing.length > 0) {
+      const err = new Error('Ya existe un servicio con este nombre');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const { data, error } = await supabase
+      .from('Servicios')
+      .insert([{ nombre_serv: nombre, valor: precio }])
+      .select('nombre_serv, valor');
+
+    if (error) {
+      const err = new Error('Error al añadir el servicio');
+      err.statusCode = 500;
+      throw err;
+    }
+
+    const newService = {
+      nombre: data[0].nombre_serv,
+      precio: data[0].valor,
+    };
+
+    res.status(201).json(newService);
+  } catch (err) {
+    next(err);
+  }
+};
+
+const updateService = async (req, res, next) => {
+  try {
+    const { nombreOriginal, nombre, precio } = req.body;
+
+    if (!nombreOriginal || !nombre || precio <= 0) {
+      const err = new Error('Nombre original, nombre nuevo y precio válido son requeridos');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const { data: existing, error: checkError } = await supabase
+      .from('Servicios')
+      .select('nombre_serv')
+      .eq('nombre_serv', nombre)
+      .neq('nombre_serv', nombreOriginal);
+
+    if (checkError) {
+      const err = new Error('Error al verificar el servicio');
+      err.statusCode = 500;
+      throw err;
+    }
+
+    if (existing.length > 0) {
+      const err = new Error('Ya existe otro servicio con este nombre');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const { data, error } = await supabase
+      .from('Servicios')
+      .update({ nombre_serv: nombre, valor: precio })
+      .eq('nombre_serv', nombreOriginal)
+      .select('nombre_serv, valor');
+
+    if (error) {
+      const err = new Error('Error al actualizar el servicio');
+      err.statusCode = 500;
+      throw err;
+    }
+
+    if (data.length === 0) {
+      const err = new Error('Servicio no encontrado');
+      err.statusCode = 404;
+      throw err;
+    }
+
+    const updatedService = {
+      nombre: data[0].nombre_serv,
+      precio: data[0].valor,
+    };
+
+    res.status(200).json(updatedService);
+  } catch (err) {
+    next(err);
+  }
+};
+
+const deleteService = async (req, res, next) => {
+  try {
+    const { nombre } = req.body;
+
+    if (!nombre) {
+      const err = new Error('Nombre del servicio requerido');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const { data, error } = await supabase
+      .from('Servicios')
+      .delete()
+      .eq('nombre_serv', nombre)
+      .select('nombre_serv, valor');
+
+    if (error) {
+      const err = new Error('Error al eliminar el servicio');
+      err.statusCode = 500;
+      throw err;
+    }
+
+    if (data.length === 0) {
+      const err = new Error('Servicio no encontrado');
+      err.statusCode = 404;
+      throw err;
+    }
+
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+};
+
 const getPaymentMethods = async (req, res, next) => {
   try {
     const { data, error } = await supabase
@@ -104,7 +243,6 @@ const getPaymentMethods = async (req, res, next) => {
   }
 };
 
-// Nueva función para obtener las cuentas bancarias
 const getAccounts = async (req, res, next) => {
   try {
     const id_sede = getIdSedeFromRequest(req);
@@ -131,6 +269,9 @@ module.exports = {
   getDoctors,
   getAssistants,
   getServices,
+  addService,     
+  updateService,  
+  deleteService,   
   getPaymentMethods,
-  getAccounts, // Exportamos la nueva función
+  getAccounts,
 };
