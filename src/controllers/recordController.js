@@ -497,49 +497,62 @@ const createRecord = async (req, res, next) => {
 
 const getRecords = async (req, res, next) => {
   try {
+    console.log('Iniciando getRecords con query:', req.query);
     const { id_sede, filtrarEstado } = req.query;
 
     if (!id_sede) {
+      console.error('Error: id_sede no proporcionado');
       const err = new Error('El id_sede es requerido');
       err.statusCode = 400;
       throw err;
     }
 
     const sedeId = parseInt(id_sede, 10);
+    console.log('id_sede convertido a número:', sedeId);
     if (isNaN(sedeId)) {
+      console.error('Error: id_sede no es un número válido');
       const err = new Error('El id_sede debe ser un número válido');
       err.statusCode = 400;
       throw err;
     }
 
+    console.log('Consultando doctores para id_sede:', sedeId);
     const { data: doctores, error: doctoresError } = await supabase
       .from('Doctores')
       .select('nombre_doc')
       .eq('id_sede', sedeId);
 
     if (doctoresError) {
+      console.error('Error al obtener los doctores:', doctoresError);
       const err = new Error('Error al obtener los doctores');
       err.statusCode = 500;
       throw err;
     }
+    console.log('Doctores obtenidos:', doctores);
 
     const nombresDoctores = doctores.map(doctor => doctor.nombre_doc);
+    console.log('Nombres de doctores:', nombresDoctores);
 
+    console.log('Consultando auxiliares para id_sede:', sedeId);
     const { data: auxiliares, error: auxiliaresError } = await supabase
       .from('Auxiliares')
       .select('nombre_aux')
       .eq('id_sede', sedeId);
 
     if (auxiliaresError) {
+      console.error('Error al obtener los auxiliares:', auxiliaresError);
       const err = new Error('Error al obtener los auxiliares');
       err.statusCode = 500;
       throw err;
     }
+    console.log('Auxiliares obtenidos:', auxiliares);
 
     const nombresAuxiliares = auxiliares.map(auxiliar => auxiliar.nombre_aux);
+    console.log('Nombres de auxiliares:', nombresAuxiliares);
 
     let doctorRecords = [];
     if (nombresDoctores.length > 0) {
+      console.log('Consultando registros de doctores para:', nombresDoctores, 'con filtrarEstado:', filtrarEstado);
       let query = supabase
         .from('dia_dia')
         .select(`
@@ -554,21 +567,27 @@ const getRecords = async (req, res, next) => {
         .order('fecha_inicio', { ascending: false });
 
       if (filtrarEstado === 'true') {
+        console.log('Aplicando filtro de estado: estado.eq.false o estado.is.null');
         query = query.or('estado.eq.false,estado.is.null');
       }
 
       const { data, error } = await query;
 
       if (error) {
+        console.error('Error al obtener los registros de doctores:', error);
         const err = new Error('Error al obtener los registros de doctores');
         err.statusCode = 500;
         throw err;
       }
+      console.log('Registros de doctores obtenidos:', data);
       doctorRecords = data;
+    } else {
+      console.log('No hay doctores para consultar registros');
     }
 
     let auxRecords = [];
     if (nombresAuxiliares.length > 0) {
+      console.log('Consultando registros de auxiliares para:', nombresAuxiliares, 'con filtrarEstado:', filtrarEstado);
       let query = supabase
         .from('dia_dia')
         .select(`
@@ -583,53 +602,66 @@ const getRecords = async (req, res, next) => {
         .order('fecha_inicio', { ascending: false });
 
       if (filtrarEstado === 'true') {
+        console.log('Aplicando filtro de estado: estado.eq.false o estado.is.null');
         query = query.or('estado.eq.false,estado.is.null');
       }
 
       const { data, error } = await query;
 
       if (error) {
+        console.error('Error al obtener los registros de auxiliares:', error);
         const err = new Error('Error al obtener los registros de auxiliares');
         err.statusCode = 500;
         throw err;
       }
+      console.log('Registros de auxiliares obtenidos:', data);
       auxRecords = data;
+    } else {
+      console.log('No hay auxiliares para consultar registros');
     }
 
     const data = [...doctorRecords, ...auxRecords];
+    console.log('Registros combinados:', data);
 
-    const formattedData = data.map((record) => ({
-      id: record.id,
-      nombreDoctor: record.nombre_doc || record.nombre_aux,
-      nombrePaciente: record.pacientes ? record.pacientes.paciente : null,
-      docId: record.doc_id,
-      servicio: record.nombre_serv,
-      abono: record.abono ?? 0, // Usar el abono original almacenado
-      descuento: record.dcto ?? 0,
-      valor_total: record.valor_total ?? 0,
-      fecha: record.fecha_inicio,
-      fechaFinal: record.fecha_final,
-      metodoPago: record.MetodoPagoPrincipal ? record.MetodoPagoPrincipal.descpMetodo : null,
-      metodoPagoAbono: record.MetodoPagoAbono ? record.MetodoPagoAbono.descpMetodo : null,
-      idPorc: record.id_porc,
-      valor_liquidado: record.valor_liquidado,
-      valor_pagado: record.valor_pagado ?? 0, // Usar el valor_pagado original almacenado
-      id_cuenta: record.id_cuenta,
-      id_cuenta_abono: record.id_cuenta_abono,
-      esPacientePropio: record.es_paciente_propio,
-      sesiones: record.Servicio ? record.Servicio.sesiones : 1,
-      montoPrestado: record.monto_prestado,
-      titularCredito: record.titular_credito,
-      esDatáfono: record.es_datáfono,
-      esDatáfonoAbono: record.es_datáfono_abono,
-      estado: record.estado ?? null,
-      tot_abono: record.pacientes ? record.pacientes.tot_abono : 0,
-      saldoAFavor: record.pacientes ? record.pacientes.tot_abono : 0, // tot_abono actual
-      saldoAFavorUsado: record.saldo_a_favor_usado ?? 0, // Recuperar el saldo a favor usado almacenado
-    }));
+    console.log('Formateando datos...');
+    const formattedData = data.map((record) => {
+      const formattedRecord = {
+        id: record.id,
+        nombreDoctor: record.nombre_doc || record.nombre_aux,
+        nombrePaciente: record.pacientes ? record.pacientes.paciente : null,
+        docId: record.doc_id,
+        servicio: record.nombre_serv,
+        abono: record.abono ?? 0,
+        descuento: record.dcto ?? 0,
+        valor_total: record.valor_total ?? 0,
+        fecha: record.fecha_inicio,
+        fechaFinal: record.fecha_final,
+        metodoPago: record.MetodoPagoPrincipal ? record.MetodoPagoPrincipal.descpMetodo : null,
+        metodoPagoAbono: record.MetodoPagoAbono ? record.MetodoPagoAbono.descpMetodo : null,
+        idPorc: record.id_porc,
+        valor_liquidado: record.valor_liquidado,
+        valor_pagado: record.valor_pagado ?? 0,
+        id_cuenta: record.id_cuenta,
+        id_cuenta_abono: record.id_cuenta_abono,
+        esPacientePropio: record.es_paciente_propio,
+        sesiones: record.Servicio ? record.Servicio.sesiones : 1,
+        montoPrestado: record.monto_prestado,
+        titularCredito: record.titular_credito,
+        esDatáfono: record.es_datáfono,
+        esDatáfonoAbono: record.es_datáfono_abono,
+        estado: record.estado ?? null,
+        tot_abono: record.pacientes ? record.pacientes.tot_abono : 0,
+        saldoAFavor: record.pacientes ? record.pacientes.tot_abono : 0,
+        saldoAFavorUsado: record.saldo_a_favor_usado ?? 0,
+      };
+      console.log(`Registro formateado con id ${record.id}:`, formattedRecord);
+      return formattedRecord;
+    });
 
+    console.log('Enviando respuesta, status: 200');
     res.status(200).json(formattedData);
   } catch (err) {
+    console.error('Error en getRecords:', err);
     next(err);
   }
 };
