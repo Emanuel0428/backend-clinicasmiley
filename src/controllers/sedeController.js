@@ -19,4 +19,4 @@ const getSedes = async (req, res, next) => {
   }
 };
 
-module.exports = { getSedes }; // Exportamos como un objeto con la función getSedes
+module.exports = { getSedes };

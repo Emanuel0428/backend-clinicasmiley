@@ -23,7 +23,14 @@ const createRecord = async (req, res, next) => {
       titularCredito,
       esDatáfono,
       esDatáfonoAbono,
+      id_sede,
     } = req.body;
+
+    // Validar id_sede
+    const sedeIdRecord = parseInt(id_sede, 10);
+    if (isNaN(sedeIdRecord)) {
+      console.warn('id_sede inválido o no proporcionado:', id_sede);
+    }
 
     // Validar y procesar la lista de servicios
     const serviciosList = servicios || [
@@ -95,10 +102,8 @@ const createRecord = async (req, res, next) => {
       console.log('Paciente creado:', pacienteData);
     }
 
-    // Guardar el tot_abono inicial para incluirlo en la respuesta
     const saldoAFavorInicial = pacienteData.tot_abono || 0;
 
-    // Obtener ID del método de pago principal
     let idMetodo = null;
     if (metodoPago) {
       console.log('Consultando método de pago:', metodoPago);
@@ -118,7 +123,6 @@ const createRecord = async (req, res, next) => {
       console.log('Método de pago encontrado:', idMetodo);
     }
 
-    // Obtener ID del método de pago del abono
     let idMetodoAbono = null;
     if (metodoPagoAbono) {
       console.log('Consultando método de pago abono:', metodoPagoAbono);
@@ -138,7 +142,6 @@ const createRecord = async (req, res, next) => {
       console.log('Método de pago abono encontrado:', idMetodoAbono);
     }
 
-    // Determinar porcentaje y id_porc según si es auxiliar o no
     let idPorc;
     let porcentaje;
     if (esAuxiliar) {
@@ -179,7 +182,6 @@ const createRecord = async (req, res, next) => {
       console.log('No es auxiliar, id_porc asignado:', idPorc, 'Porcentaje:', porcentaje);
     }
 
-    // Manejo de cuentas para transferencia
     let finalIdCuenta = null;
     if (metodoPago === 'Transferencia' && id_cuenta) {
       finalIdCuenta = id_cuenta;
@@ -192,19 +194,17 @@ const createRecord = async (req, res, next) => {
       console.log('Método de pago abono es Transferencia, id_cuenta_abono:', finalIdCuentaAbono);
     }
 
-    // Distribuir el tot_abono del paciente entre los servicios
     let totAbonoRestante = pacienteData.tot_abono || 0;
     console.log('Tot_abono inicial del paciente:', totAbonoRestante);
 
     let costoTotalOriginal = costoTotalServicios;
     let totAbonoUsadoTotal = 0;
 
-    // Guardar cuánto tot_abono se usa por cada servicio
     const abonosUsadosPorServicio = [];
 
     for (const servicio of serviciosData) {
       if (totAbonoRestante <= 0) {
-        abonosUsadosPorServicio.push(0); // No se usó tot_abono para este servicio
+        abonosUsadosPorServicio.push(0);
         continue;
       }
 
@@ -216,7 +216,7 @@ const createRecord = async (req, res, next) => {
       servicio.valor = Math.max(0, servicio.valor);
       totAbonoRestante -= abonoAsignado;
       totAbonoUsadoTotal += abonoAsignado;
-      abonosUsadosPorServicio.push(abonoAsignado); // Guardar cuánto se usó para este servicio
+      abonosUsadosPorServicio.push(abonoAsignado);
 
       console.log(`Servicio ${servicio.nombre_serv}: valor original ${valorOriginal}, abono asignado ${abonoAsignado}, nuevo valor ${servicio.valor}`);
     }
@@ -226,7 +226,6 @@ const createRecord = async (req, res, next) => {
     costoTotalServicios = serviciosData.reduce((sum, servicio) => sum + servicio.valor, 0);
     console.log('Costo total de los servicios después de aplicar tot_abono:', costoTotalServicios);
 
-    // Calcular valor liquidado total y saldo a favor
     let valorLiquidadoTotal = costoTotalServicios;
     let saldoAFavor = 0;
 
@@ -257,7 +256,6 @@ const createRecord = async (req, res, next) => {
       saldoAFavor = 0;
     }
 
-    // Procesar cada servicio y crear/actualizar registros
     const registros = [];
     let valorPagadoRestante = valorPagado || 0;
     let abonoRestante = abonoTotal;
@@ -266,7 +264,7 @@ const createRecord = async (req, res, next) => {
 
     for (let i = 0; i < serviciosData.length; i++) {
       const servicioData = serviciosData[i];
-      const saldoAFavorUsadoServicio = abonosUsadosPorServicio[i]; // Usar el tot_abono que se restó para este servicio
+      const saldoAFavorUsadoServicio = abonosUsadosPorServicio[i];
 
       const valorTotal = servicioData.valor;
       let valorLiquidado = valorTotal;
@@ -330,11 +328,11 @@ const createRecord = async (req, res, next) => {
       const recordData = {
         doc_id: docId,
         nombre_serv: servicioData.nombre_serv,
-        abono: abonoTotal > 0 ? abonoTotal : null, // Almacenar el abono original ingresado
+        abono: abonoTotal > 0 ? abonoTotal : null,
         dcto: servicioDescuento > 0 ? servicioDescuento : null,
         valor_total: valorTotal,
         valor_liquidado: valorLiquidado,
-        valor_pagado: valorPagado || 0, // Almacenar el valor_pagado original ingresado
+        valor_pagado: valorPagado || 0,
         fecha_inicio: fecha,
         fecha_final: fechaFinal,
         id_metodo: idMetodo,
@@ -347,7 +345,7 @@ const createRecord = async (req, res, next) => {
         titular_credito: metodoPago === 'Crédito' ? titularCredito : null,
         es_datáfono: metodoPago === 'Datáfono' ? !!esDatáfono : false,
         es_datáfono_abono: metodoPagoAbono === 'Datáfono' ? !!esDatáfonoAbono : false,
-        saldo_a_favor_usado: saldoAFavorUsadoServicio, // Almacenar cuánto tot_abono se usó
+        saldo_a_favor_usado: saldoAFavorUsadoServicio,
       };
 
       if (esAuxiliar) {
@@ -387,7 +385,7 @@ const createRecord = async (req, res, next) => {
             titular_credito: metodoPago === 'Crédito' ? titularCredito : existingRecord.titular_credito,
             es_datáfono: updatedEsDatáfono,
             es_datáfono_abono: updatedEsDatáfonoAbono,
-            saldo_a_favor_usado: saldoAFavorUsadoServicio, // Actualizar el saldo a favor usado
+            saldo_a_favor_usado: saldoAFavorUsadoServicio,
           })
           .eq('id', existingRecord.id)
           .select('*, pacientes!doc_id(paciente, tot_abono)')
@@ -407,13 +405,13 @@ const createRecord = async (req, res, next) => {
           nombrePaciente: updatedRecord.pacientes.paciente,
           docId: updatedRecord.doc_id,
           servicio: updatedRecord.nombre_serv,
-          abono: updatedAbono, // Devolver el abono original
+          abono: updatedAbono,
           metodoPagoAbono: metodoPagoAbono || existingRecord.metodoPagoAbono,
           id_cuenta_abono: updatedRecord.id_cuenta_abono,
           descuento: updatedDcto,
           valor_total: updatedRecord.valor_total,
           valor_liquidado: updatedRecord.valor_liquidado,
-          valor_pagado: updatedValorPagado, // Devolver el valor_pagado original
+          valor_pagado: updatedValorPagado,
           fecha: updatedRecord.fecha_inicio,
           fechaFinal: updatedRecord.fecha_final,
           metodoPago: metodoPago || existingRecord.metodoPago,
@@ -424,8 +422,8 @@ const createRecord = async (req, res, next) => {
           esDatáfono: updatedRecord.es_datáfono,
           esDatáfonoAbono: updatedRecord.es_datáfono_abono,
           tot_abono: updatedRecord.pacientes.tot_abono,
-          saldoAFavor: saldoAFavorInicial, // tot_abono inicial
-          saldoAFavorUsado: saldoAFavorUsadoServicio, // Cuánto del tot_abono se usó para este servicio
+          saldoAFavor: saldoAFavorInicial,
+          saldoAFavorUsado: saldoAFavorUsadoServicio,
         });
       } else {
         console.log('Insertando nuevo registro en dia_dia');
@@ -449,13 +447,13 @@ const createRecord = async (req, res, next) => {
           nombrePaciente: data.pacientes.paciente,
           docId: data.doc_id,
           servicio: data.nombre_serv,
-          abono: abonoTotal > 0 ? abonoTotal : null, // Devolver el abono original
+          abono: abonoTotal > 0 ? abonoTotal : null,
           metodoPagoAbono: metodoPagoAbono,
           id_cuenta_abono: data.id_cuenta_abono,
           descuento: servicioDescuento > 0 ? servicioDescuento : null,
           valor_total: data.valor_total,
           valor_liquidado: data.valor_liquidado,
-          valor_pagado: valorPagado || 0, // Devolver el valor_pagado original
+          valor_pagado: valorPagado || 0,
           fecha: data.fecha_inicio,
           fechaFinal: data.fecha_final,
           metodoPago: metodoPago,
@@ -466,13 +464,12 @@ const createRecord = async (req, res, next) => {
           esDatáfono: data.es_datáfono,
           esDatáfonoAbono: data.es_datáfono_abono,
           tot_abono: data.pacientes.tot_abono,
-          saldoAFavor: saldoAFavorInicial, // tot_abono inicial
-          saldoAFavorUsado: saldoAFavorUsadoServicio, // Cuánto del tot_abono se usó para este servicio
+          saldoAFavor: saldoAFavorInicial,
+          saldoAFavorUsado: saldoAFavorUsadoServicio,
         });
       }
     }
 
-    // Actualizar el tot_abono del paciente
     const nuevoTotAbono = totAbonoRestante + saldoAFavor;
     console.log('Actualizando tot_abono para paciente:', docId, 'Nuevo valor:', nuevoTotAbono);
     const { error: updatePacienteError } = await supabase
@@ -485,6 +482,40 @@ const createRecord = async (req, res, next) => {
       const err = new Error('Error al actualizar el total de abonos del paciente');
       err.statusCode = 500;
       throw err;
+    }
+
+    // Actualizar la base de la caja para pagos/abonos en efectivo
+    if (sedeIdRecord && !isNaN(sedeIdRecord)) {
+      let baseIncrement = 0;
+
+      if (metodoPago === 'Efectivo' && valorPagado && !isNaN(parseFloat(valorPagado))) {
+        baseIncrement += parseFloat(valorPagado);
+        console.log(`Sumando valorPagado en efectivo: ${valorPagado}`);
+      }
+
+      if (metodoPagoAbono === 'Efectivo' && abono && !isNaN(parseFloat(abono))) {
+        baseIncrement += parseFloat(abono);
+        console.log(`Sumando abono en efectivo: ${abono}`);
+      }
+
+      if (baseIncrement > 0) {
+        console.log(`Incrementando base para sede ${sedeIdRecord} en ${baseIncrement}`);
+        const { data: newBase, error: updateCajaError } = await supabase
+          .rpc('increment_caja_base', {
+            p_id_sede: sedeIdRecord,
+            p_increment: baseIncrement,
+          });
+
+        if (updateCajaError) {
+          console.error('Error al incrementar base de caja:', updateCajaError);
+        } else {
+          console.log(`Base para sede ${sedeIdRecord} actualizada a ${newBase}`);
+        }
+      } else {
+        console.log('No hay pagos o abonos en efectivo para incrementar la base.');
+      }
+    } else {
+      console.warn('No se actualizó la base de la caja: id_sede no válido.');
     }
 
     res.status(201).json(registros);
