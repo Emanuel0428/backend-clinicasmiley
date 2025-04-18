@@ -9,7 +9,7 @@ const recordRoutes = require('./routes/recordRoutes');
 const sedeRoutes = require('./routes/sedeRoutes');
 const errorHandler = require('./middleware/errorHandler');
 const cajaRoutes = require('./routes/cajaRoutes');
-const gastosRoutes = require('./routes/gastosRoutes');
+const gastoRoutes = require('./routes/gastoRoutes');
 const app = express();
 
 // Middleware
@@ -28,7 +28,7 @@ app.use('/api', dataRoutes);
 app.use('/api', recordRoutes);
 app.use('/api', sedeRoutes); 
 app.use('/api', cajaRoutes);
-app.use('/api', gastosRoutes);  
+app.use('/api', gastoRoutes);  
 
 // Error Handling Middleware
 app.use(errorHandler);
